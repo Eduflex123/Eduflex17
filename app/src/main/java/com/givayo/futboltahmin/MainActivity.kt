@@ -25,9 +25,14 @@ class MainActivity : Activity() {
     private val prefs by lazy { getSharedPreferences("futbol_tahmin", MODE_PRIVATE) }
     private lateinit var root: LinearLayout
     private lateinit var content: LinearLayout
-    private val green = Color.rgb(17, 105, 76)
-    private val ink = Color.rgb(28, 38, 48)
-    private val muted = Color.rgb(98, 110, 120)
+    private lateinit var bottomNav: LinearLayout
+    private val green = Color.rgb(57, 255, 20) // neon green accent
+    private val ink = Color.rgb(242, 245, 242)
+    private val muted = Color.rgb(158, 168, 160)
+    private val page = Color.rgb(10, 12, 11)
+    private val panel = Color.rgb(23, 27, 24)
+    private val panelAlt = Color.rgb(31, 37, 32)
+    private var activeTab = 0
     private var loading = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -38,40 +43,95 @@ class MainActivity : Activity() {
     }
 
     private fun buildShell() {
-        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(245, 247, 249)) }
+        window.statusBarColor = Color.rgb(5, 7, 6)
+        window.navigationBarColor = Color.rgb(5, 7, 6)
+        root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(page) }
         val header = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(22), dp(20), dp(16)); setBackgroundColor(green)
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(16))
+            setBackgroundColor(Color.rgb(5, 7, 6))
         }
-        header.addView(TextView(this).apply { text = "FUTBOL TAHMİN"; textSize = 22f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD) })
-        header.addView(TextView(this).apply { text = "İstatistik tabanlı maç analizi · Oran yok"; textSize = 13f; setTextColor(Color.rgb(220, 240, 231)); setPadding(0, dp(5), 0, 0) })
+        val brandRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val mark = TextView(this).apply {
+            text = "FT"; textSize = 17f; setTypeface(null, Typeface.BOLD); setTextColor(Color.BLACK)
+            gravity = Gravity.CENTER; setBackgroundColor(green); setPadding(dp(9), dp(7), dp(9), dp(7))
+        }
+        brandRow.addView(mark, LinearLayout.LayoutParams(dp(42), dp(42)))
+        val brandText = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(11), 0, 0, 0) }
+        brandText.addView(TextView(this).apply { text = "FUTBOLTAHMİN"; textSize = 19f; setTextColor(Color.WHITE); setTypeface(null, Typeface.BOLD); letterSpacing = 0.06f })
+        brandText.addView(TextView(this).apply { text = "MATCH INTELLIGENCE  /  İSTATİSTİK"; textSize = 9f; setTextColor(green); setPadding(0, dp(3), 0, 0); letterSpacing = 0.08f })
+        brandRow.addView(brandText, LinearLayout.LayoutParams(0, -2, 1f))
+        val status = TextView(this).apply { text = "● API VERİSİ"; textSize = 9f; setTextColor(green); gravity = Gravity.CENTER_VERTICAL }
+        brandRow.addView(status)
+        header.addView(brandRow)
         root.addView(header)
-        val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(12), dp(8), dp(12), dp(8)); setBackgroundColor(Color.WHITE) }
-        nav.addView(navButton("Bugünün Maçları") { showHome() }, LinearLayout.LayoutParams(0, dp(44), 1f))
-        nav.addView(navButton("Tahmin Geçmişi") { showHistory() }, LinearLayout.LayoutParams(0, dp(44), 1f))
-        nav.addView(navButton("API Ayarı") { showApiKeyDialog(true) }, LinearLayout.LayoutParams(0, dp(44), 1f))
-        root.addView(nav)
-        val scroll = ScrollView(this)
-        content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(24)) }
+
+        val scroll = ScrollView(this).apply { isFillViewport = true; overScrollMode = View.OVER_SCROLL_NEVER }
+        content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(18), dp(16), dp(24)); setBackgroundColor(page) }
         scroll.addView(content)
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        bottomNav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(5), dp(7), dp(5), dp(7)); setBackgroundColor(Color.rgb(5, 7, 6))
+            elevation = dp(10).toFloat()
+        }
+        root.addView(bottomNav, LinearLayout.LayoutParams(-1, dp(68)))
         setContentView(root)
+        updateBottomNav()
     }
 
-    private fun navButton(label: String, action: () -> Unit): Button = Button(this).apply {
+    private fun updateBottomNav() {
+        if (!::bottomNav.isInitialized) return
+        bottomNav.removeAllViews()
+        val labels = listOf("⚽\nMAÇLAR", "◈\nANALİZLER", "▥\nİSTATİSTİK", "⚙\nAYARLAR")
+        labels.forEachIndexed { index, label ->
+            val selected = activeTab == index
+            val item = TextView(this).apply {
+                text = label; gravity = Gravity.CENTER; textSize = 10f
+                setTextColor(if (selected) green else muted)
+                setTypeface(null, if (selected) Typeface.BOLD else Typeface.NORMAL)
+                setPadding(dp(3), dp(5), dp(3), dp(5))
+                if (selected) setBackgroundColor(Color.rgb(23, 39, 24)) else setBackgroundColor(Color.TRANSPARENT)
+                setOnClickListener {
+                    when (index) {
+                        0 -> showHome()
+                        1 -> showHistory()
+                        2 -> showStatistics()
+                        3 -> { activeTab = 3; updateBottomNav(); showSettings() }
+                    }
+                }
+            }
+            bottomNav.addView(item, LinearLayout.LayoutParams(0, -1, 1f).apply { setMargins(dp(3), 0, dp(3), 0) })
+        }
+    }
+
+    private fun navButton(label: String, action: () -> Unit): Button = makeButton().apply {
         text = label; textSize = 11f; isAllCaps = false; setTextColor(green); setOnClickListener { action() }
     }
 
+    private fun makeButton(): Button = Button(this).apply {
+        isAllCaps = false
+        textSize = 13f
+        setTextColor(Color.BLACK)
+        backgroundTintList = android.content.res.ColorStateList.valueOf(green)
+        minHeight = dp(44)
+        stateListAnimator = null
+    }
+
     private fun showHome() {
+        activeTab = 0; updateBottomNav()
         content.removeAllViews()
         val date = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
+        content.addView(eyebrow("MATCH CENTER  /  BUGÜN"))
         content.addView(title("Bugünün maçları"))
-        content.addView(body("Tarih: $date  ·  Veriler API-Football üzerinden alınır."))
-        val refresh = Button(this).apply { text = if (loading) "Yükleniyor…" else "Maçları güncelle"; isAllCaps = false; setOnClickListener { loadFixtures(date) } }
+        content.addView(body("Tarih: $date  ·  Fikstür API-Football üzerinden alınır."))
+        val refresh = makeButton().apply { text = if (loading) "Yükleniyor…" else "↻   Maçları güncelle"; setOnClickListener { loadFixtures(date) } }
         content.addView(refresh, matchWidth())
         if (prefs.getString("api_key", "").isNullOrBlank()) {
             content.addView(note("Başlamak için API Ayarı bölümüne API-Football anahtarınızı girin. API anahtarı olmadan canlı veriler alınamaz."))
         } else {
-            content.addView(body("Tahminler son 5 maçın gol verilerinden hesaplanır. Örnek veya garanti sonuç değildir."))
+            content.addView(body("Tahminler geçmiş tamamlanmış maçların skorlarından hesaplanır. Örnek veya garanti sonuç değildir."))
             loadFixtures(date)
         }
     }
@@ -101,7 +161,7 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     loading = false; content.removeAllViews(); content.addView(title("Veri alınamadı"))
                     content.addView(note("${e.message ?: "Bağlantı hatası"}\n\nAPI anahtarınızı, internet bağlantınızı ve sağlayıcı kotanızı kontrol edin."))
-                    content.addView(Button(this).apply { text = "Tekrar dene"; isAllCaps = false; setOnClickListener { loadFixtures(date) } })
+                    content.addView(makeButton().apply { text = "Tekrar dene"; isAllCaps = false; setOnClickListener { loadFixtures(date) } })
                 }
             }
         }.start()
@@ -129,9 +189,9 @@ class MainActivity : Activity() {
         }
         val result = TextView(this).apply { text = "Analiz için düğmeye basın. API kotasını korumak için istatistikler istek üzerine alınır."; textSize = 13f; setTextColor(muted); setPadding(0, dp(6), 0, dp(6)) }
         card.addView(result)
-        val analyze = Button(this).apply { text = "İstatistikleri analiz et"; isAllCaps = false }
+        val analyze = makeButton().apply { text = "İstatistikleri analiz et"; isAllCaps = false }
         card.addView(analyze, matchWidth())
-        val save = Button(this).apply { text = "Tahmini geçmişe kaydet"; isAllCaps = false; isEnabled = false }
+        val save = makeButton().apply { text = "Tahmini geçmişe kaydet"; isAllCaps = false; isEnabled = false }
         card.addView(save, matchWidth())
         save.setOnClickListener {
             val text = result.text.toString()
@@ -270,7 +330,8 @@ class MainActivity : Activity() {
     }
 
     private fun showHistory() {
-        content.removeAllViews(); content.addView(title("Tahmin geçmişi"))
+        activeTab = 1; updateBottomNav()
+        content.removeAllViews(); content.addView(eyebrow("ANALYSIS LAB  /  KAYITLAR")); content.addView(title("Analizlerim"))
         val hist = readHistory()
         var rated = 0; var correct = 0
         for (i in 0 until hist.length()) { val e = hist.optJSONObject(i) ?: continue; if (e.optBoolean("rated")) { rated++; if (e.optBoolean("correct")) correct++ } }
@@ -284,7 +345,7 @@ class MainActivity : Activity() {
             card.addView(TextView(this).apply { text = "${e.optString("home")} - ${e.optString("away")}"; textSize = 16f; setTypeface(null, Typeface.BOLD); setTextColor(ink) })
             card.addView(body("${e.optString("league")} · ${e.optString("date")}\nTahmin: ${e.optString("prediction")}"))
             if (e.optBoolean("rated")) card.addView(body(if (e.optBoolean("correct")) "Değerlendirme: Doğru" else "Değerlendirme: Yanlış"))
-            else card.addView(Button(this).apply {
+            else card.addView(makeButton().apply {
                 text = "Sonuç tahminimi değerlendir"; isAllCaps = false
                 setOnClickListener {
                     AlertDialog.Builder(this@MainActivity).setTitle("Tahmin doğru muydu?")
@@ -295,17 +356,82 @@ class MainActivity : Activity() {
             })
             content.addView(card)
         }
-        if (hist.length() > 0) content.addView(Button(this).apply { text = "Geçmişi temizle"; isAllCaps = false; setOnClickListener { AlertDialog.Builder(this@MainActivity).setMessage("Tüm tahmin geçmişi silinsin mi?").setPositiveButton("Sil") { _, _ -> prefs.edit().remove("history").apply(); showHistory() }.setNegativeButton("Vazgeç", null).show() } })
+        if (hist.length() > 0) content.addView(makeButton().apply { text = "Geçmişi temizle"; isAllCaps = false; setOnClickListener { AlertDialog.Builder(this@MainActivity).setMessage("Tüm tahmin geçmişi silinsin mi?").setPositiveButton("Sil") { _, _ -> prefs.edit().remove("history").apply(); showHistory() }.setNegativeButton("Vazgeç", null).show() } })
+    }
+
+    private fun showStatistics() {
+        activeTab = 2; updateBottomNav()
+        content.removeAllViews()
+        content.addView(eyebrow("PERFORMANCE  /  DASHBOARD"))
+        content.addView(title("İstatistikler"))
+        val hist = readHistory()
+        var rated = 0; var correct = 0; var pending = 0
+        val leagueCounts = linkedMapOf<String, Int>()
+        for (i in 0 until hist.length()) {
+            val e = hist.optJSONObject(i) ?: continue
+            leagueCounts[e.optString("league", "Diğer")] = (leagueCounts[e.optString("league", "Diğer")] ?: 0) + 1
+            if (e.optBoolean("rated")) { rated++; if (e.optBoolean("correct")) correct++ } else pending++
+        }
+        val accuracy = if (rated > 0) "%.1f%%".format(Locale.US, correct * 100.0 / rated) else "—"
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(statCard("${hist.length()}", "TOPLAM TAHMİN"), LinearLayout.LayoutParams(0, dp(106), 1f).apply { rightMargin = dp(6) })
+        row.addView(statCard(accuracy, "BAŞARI ORANI"), LinearLayout.LayoutParams(0, dp(106), 1f).apply { leftMargin = dp(6) })
+        content.addView(row)
+        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(10), 0, dp(14)) }
+        row2.addView(statCard("$correct", "DOĞRU"), LinearLayout.LayoutParams(0, dp(94), 1f).apply { rightMargin = dp(6) })
+        row2.addView(statCard("${rated - correct}", "YANLIŞ"), LinearLayout.LayoutParams(0, dp(94), 1f).apply { leftMargin = dp(6); rightMargin = dp(6) })
+        row2.addView(statCard("$pending", "BEKLEYEN"), LinearLayout.LayoutParams(0, dp(94), 1f).apply { leftMargin = dp(6) })
+        content.addView(row2)
+        content.addView(sectionTitle("LİGLERE GÖRE DAĞILIM"))
+        if (leagueCounts.isEmpty()) content.addView(note("Henüz istatistik oluşturacak tahmin yok. Maç kartlarından analiz yapıp tahminleri geçmişe kaydedebilirsin."))
+        else leagueCounts.entries.sortedByDescending { it.value }.forEach { (league, count) ->
+            val card = verticalCard()
+            val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            line.addView(TextView(this).apply { text = league; textSize = 14f; setTextColor(ink); setTypeface(null, Typeface.BOLD) }, LinearLayout.LayoutParams(0, -2, 1f))
+            line.addView(TextView(this).apply { text = "$count tahmin"; textSize = 12f; setTextColor(green) })
+            card.addView(line); content.addView(card)
+        }
+        content.addView(body("Başarı oranı yalnızca sonucu elle değerlendirilmiş tahminler üzerinden hesaplanır. İstatistikler geçmiş kayıtlarına dayanır; gelecekteki sonuçları garanti etmez."))
+    }
+
+    private fun statCard(value: String, label: String): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(13), dp(12), dp(10), dp(12)); setBackgroundColor(panel)
+        addView(TextView(this@MainActivity).apply { text = value; textSize = 24f; setTextColor(green); setTypeface(null, Typeface.BOLD) })
+        addView(TextView(this@MainActivity).apply { text = label; textSize = 9f; setTextColor(muted); setPadding(0, dp(5), 0, 0); letterSpacing = 0.05f })
+    }
+
+    private fun showSettings() {
+        activeTab = 3; updateBottomNav()
+        content.removeAllViews()
+        content.addView(eyebrow("APP CONTROL  /  PREFERENCES"))
+        content.addView(title("Ayarlar"))
+        val apiCard = verticalCard()
+        apiCard.addView(sectionTitle("VERİ KAYNAKLARI"))
+        apiCard.addView(body("API-Football: ${if (prefs.getString("api_key", "").isNullOrBlank()) "Anahtar girilmedi" else "Anahtar kayıtlı"}"))
+        apiCard.addView(body("Footballdata.io: ${if (prefs.getString("footballdata_key", "").isNullOrBlank()) "Anahtar girilmedi" else "Anahtar kayıtlı"}"))
+        apiCard.addView(makeButton().apply { text = "API anahtarlarını düzenle"; setOnClickListener { showApiKeyDialog(true) } })
+        content.addView(apiCard)
+        val about = verticalCard()
+        about.addView(sectionTitle("UYGULAMA HAKKINDA"))
+        about.addView(body("FutbolTahmin maç verilerini ve geçmiş sonuçları istatistiksel olarak değerlendirir. Tahminler olasılık hesabıdır; kesin sonuç veya garanti değildir."))
+        about.addView(body("Arayüz: Blackout · Neon Green"))
+        content.addView(about)
+        val history = verticalCard()
+        history.addView(sectionTitle("VERİLERİNİ YÖNET"))
+        history.addView(body("Tahmin geçmişi bu cihazda saklanır."))
+        history.addView(makeButton().apply { text = "Tahmin geçmişini aç"; setOnClickListener { showHistory() } })
+        content.addView(history)
     }
 
     private fun showApiKeyDialog(allowCancel: Boolean) {
         val input = EditText(this).apply { hint = "API-Football anahtarı (gerekli)"; setSingleLine(true); setText(prefs.getString("api_key", "")) }
         val secondInput = EditText(this).apply { hint = "Footballdata.io anahtarı (isteğe bağlı)"; setSingleLine(true); setText(prefs.getString("footballdata_key", "")) }
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), dp(8), dp(22), 0) }
-        box.addView(TextView(this).apply { text = "API-Football güncel maç listesini sağlar. Geçmiş sezon verisi kısıtlanırsa Footballdata.io anahtarı analiz için yedek kaynak olarak kullanılır. Anahtarlar yalnızca bu cihazda saklanır."; textSize = 14f; setTextColor(ink) })
-        box.addView(TextView(this).apply { text = "API-Football"; textSize = 13f; setTextColor(ink); setPadding(0, dp(12), 0, 0) })
+        box.addView(TextView(this).apply { text = "API-Football güncel maç listesini sağlar. Geçmiş sezon verisi kısıtlanırsa Footballdata.io anahtarı analiz için yedek kaynak olarak kullanılır. Anahtarlar yalnızca bu cihazda saklanır."; textSize = 14f; setTextColor(Color.DKGRAY) })
+        box.addView(TextView(this).apply { text = "API-Football"; textSize = 13f; setTextColor(Color.DKGRAY); setPadding(0, dp(12), 0, 0) })
         box.addView(input)
-        box.addView(TextView(this).apply { text = "Footballdata.io (yedek geçmiş maç kaynağı)"; textSize = 13f; setTextColor(ink); setPadding(0, dp(10), 0, 0) })
+        box.addView(TextView(this).apply { text = "Footballdata.io (yedek geçmiş maç kaynağı)"; textSize = 13f; setTextColor(Color.DKGRAY); setPadding(0, dp(10), 0, 0) })
         box.addView(secondInput)
         val builder = AlertDialog.Builder(this).setTitle("Veri kaynağı ayarı").setView(box)
             .setPositiveButton("Kaydet", null)
@@ -498,10 +624,12 @@ class MainActivity : Activity() {
     }
 
     private fun readHistory(): JSONArray = try { JSONArray(prefs.getString("history", "[]")) } catch (_: Exception) { JSONArray() }
-    private fun title(s: String) = TextView(this).apply { text = s; textSize = 21f; setTextColor(ink); setTypeface(null, Typeface.BOLD); setPadding(0, 0, 0, dp(7)) }
-    private fun body(s: String) = TextView(this).apply { text = s; textSize = 13f; setTextColor(muted); setPadding(0, dp(4), 0, dp(6)) }
-    private fun note(s: String) = TextView(this).apply { text = s; textSize = 14f; setTextColor(ink); setPadding(dp(14), dp(12), dp(14), dp(12)); setBackgroundColor(Color.rgb(231, 241, 236)); setLineSpacing(dp(2).toFloat(), 1f) }
-    private fun verticalCard() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(12)); setBackgroundColor(Color.WHITE); elevation = dp(2).toFloat(); layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) } }
+    private fun eyebrow(s: String) = TextView(this).apply { text = s; textSize = 10f; setTextColor(green); letterSpacing = 0.08f; setPadding(0, 0, 0, dp(7)) }
+    private fun sectionTitle(s: String) = TextView(this).apply { text = s; textSize = 11f; setTextColor(green); setTypeface(null, Typeface.BOLD); letterSpacing = 0.06f; setPadding(0, 0, 0, dp(9)) }
+    private fun title(s: String) = TextView(this).apply { text = s; textSize = 25f; setTextColor(ink); setTypeface(null, Typeface.BOLD); setPadding(0, 0, 0, dp(7)) }
+    private fun body(s: String) = TextView(this).apply { text = s; textSize = 13f; setTextColor(muted); setPadding(0, dp(4), 0, dp(7)); setLineSpacing(dp(1).toFloat(), 1f) }
+    private fun note(s: String) = TextView(this).apply { text = s; textSize = 13f; setTextColor(ink); setPadding(dp(14), dp(12), dp(14), dp(12)); setBackgroundColor(Color.rgb(24, 43, 26)); setLineSpacing(dp(2).toFloat(), 1f) }
+    private fun verticalCard() = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(15), dp(14), dp(15), dp(14)); setBackgroundColor(panel); elevation = dp(2).toFloat(); layoutParams = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) } }
     private fun matchWidth() = LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 }
