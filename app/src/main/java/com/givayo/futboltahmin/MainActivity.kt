@@ -299,29 +299,100 @@ class MainActivity : Activity() {
     private fun emptyStats() = Stats(0.0, 0.0, 0, "Veri yok", 0.0, 0.0, 0, 0.0, 0.0, 0)
 
     private fun calculatePrediction(home: Stats, away: Stats): String {
-        // Prefer home team's home record and away team's away record when at least two samples exist.
-        val homeAttack = if (home.homeCount >= 2) home.homeScored else home.scored
-        val homeDefense = if (home.homeCount >= 2) home.homeConceded else home.conceded
-        val awayAttack = if (away.awayCount >= 2) away.awayScored else away.scored
-        val awayDefense = if (away.awayCount >= 2) away.awayConceded else away.conceded
-        val lh = (homeAttack * 0.55 + awayDefense * 0.45 + 0.12).coerceIn(0.15, 3.8)
-        val la = (awayAttack * 0.55 + homeDefense * 0.45 - 0.05).coerceIn(0.15, 3.8)
-        val hp = DoubleArray(9) { poisson(lh, it) }; val ap = DoubleArray(9) { poisson(la, it) }
-        var p1 = 0.0; var px = 0.0; var p2 = 0.0; var over = 0.0; var btts = 0.0; var best = 0.0; var score = "0-0"
-        for (h in 0..8) for (a in 0..8) {
-            val p = hp[h] * ap[a]
-            if (h > a) p1 += p else if (h == a) px += p else p2 += p
-            if (h + a >= 3) over += p
-            if (h > 0 && a > 0) btts += p
-            if (p > best) { best = p; score = "$h-$a" }
+        // Use venue-specific scoring/conceding averages when there are enough samples.
+        // Shrink small samples toward each team's overall average to reduce noisy extremes.
+        fun blend(venueValue: Double, overall: Double, venueCount: Int): Double {
+            if (venueCount <= 0) return overall
+            val weight = (venueCount.toDouble() / (venueCount + 5.0)).coerceIn(0.0, 0.65)
+            return venueValue * weight + overall * (1.0 - weight)
         }
-        // Normalize outcome probabilities so 1/X/2 add up to 100% despite finite score range.
-        val total = (p1 + px + p2).coerceAtLeast(0.000001)
-        p1 /= total; px /= total; p2 /= total
-        fun pct(v: Double) = "%.0f%%".format(Locale.US, v.coerceIn(0.0, 1.0) * 100)
-        val sampleNote = if (home.count < 5 || away.count < 5) "\nUyarı: En az bir takımda 5'ten az maç var; tahmin güveni düşüktür." else ""
-        val venueNote = "\nEv sahibinin iç saha örneği: ${home.homeCount} maç; deplasmanın dış saha örneği: ${away.awayCount} maç."
-        return "Maç sonucu: ${if (p1 >= px && p1 >= p2) "1" else if (p2 >= p1 && p2 >= px) "2" else "X"}\n1: ${pct(p1)}   X: ${pct(px)}   2: ${pct(p2)}\n2,5 üst: ${pct(over)}   Karşılıklı gol: ${pct(btts)}\nEn olası skor: $score\nSon ${home.count} maç ortalaması — Ev sahibi: ${"%.2f".format(Locale.US, home.scored)} atılan / ${"%.2f".format(Locale.US, home.conceded)} yenilen\nSon ${away.count} maç ortalaması — Deplasman: ${"%.2f".format(Locale.US, away.scored)} atılan / ${"%.2f".format(Locale.US, away.conceded)} yenilen\nForm (G: galibiyet, B: beraberlik, M: mağlubiyet): ${home.form} | ${away.form}$venueNote$sampleNote\nModel: son tamamlanmış maçların skorlarından üretilen basit Poisson tahmini; kesinlik veya garanti içermez."
+        val homeAttack = blend(home.homeScored, home.scored, home.homeCount)
+        val homeDefense = blend(home.homeConceded, home.conceded, home.homeCount)
+        val awayAttack = blend(away.awayScored, away.scored, away.awayCount)
+        val awayDefense = blend(away.awayConceded, away.conceded, away.awayCount)
+
+        // Goal expectations are estimates from recent full-time scores, not provider xG.
+        val lh = (homeAttack * 0.55 + awayDefense * 0.45 + 0.10).coerceIn(0.15, 3.6)
+        val la = (awayAttack * 0.55 + homeDefense * 0.45 - 0.03).coerceIn(0.15, 3.4)
+        val maxGoals = 9
+        val hp = DoubleArray(maxGoals + 1) { poisson(lh, it) }
+        val ap = DoubleArray(maxGoals + 1) { poisson(la, it) }
+        var gridTotal = 0.0
+        var p1 = 0.0; var px = 0.0; var p2 = 0.0
+        var over15 = 0.0; var over25 = 0.0; var over35 = 0.0; var btts = 0.0
+        var homeScores = 0.0; var awayScores = 0.0; var homeOver15 = 0.0; var awayOver15 = 0.0
+        val scorelines = mutableListOf<Triple<String, Double, Int>>()
+        for (h in 0..maxGoals) for (a in 0..maxGoals) {
+            val prob = hp[h] * ap[a]
+            gridTotal += prob
+            if (h > a) p1 += prob else if (h == a) px += prob else p2 += prob
+            if (h + a >= 2) over15 += prob
+            if (h + a >= 3) over25 += prob
+            if (h + a >= 4) over35 += prob
+            if (h > 0 && a > 0) btts += prob
+            if (h > 0) homeScores += prob
+            if (a > 0) awayScores += prob
+            if (h >= 2) homeOver15 += prob
+            if (a >= 2) awayOver15 += prob
+            scorelines.add(Triple("$h-$a", prob, h * 10 + a))
+        }
+        val norm = gridTotal.coerceAtLeast(0.000001)
+        fun pct(v: Double) = "%.1f%%".format(Locale.US, (v / norm).coerceIn(0.0, 1.0) * 100)
+        fun rawPct(v: Double) = "%.1f%%".format(Locale.US, v.coerceIn(0.0, 1.0) * 100)
+        fun result(h: Int, a: Int) = if (h > a) "1" else if (h == a) "X" else "2"
+
+        val topScores = scorelines.sortedByDescending { it.second }.take(5)
+            .joinToString("\n") { "${it.first}: ${pct(it.second)}" }
+
+        // No dependable half-time score history is guaranteed by both data providers.
+        // Estimate first-half goal intensity as 43% of full-match intensity and label it clearly.
+        val halfShare = 0.43
+        val h1Lambda = lh * halfShare
+        val a1Lambda = la * halfShare
+        val h2Lambda = (lh - h1Lambda).coerceAtLeast(0.05)
+        val a2Lambda = (la - a1Lambda).coerceAtLeast(0.05)
+        val h1p = DoubleArray(8) { poisson(h1Lambda, it) }
+        val a1p = DoubleArray(8) { poisson(a1Lambda, it) }
+        var ht1 = 0.0; var htx = 0.0; var ht2 = 0.0
+        var htOver05 = 0.0; var htOver15 = 0.0; var htOver25 = 0.0
+        var htBtts = 0.0
+        val htScores = mutableListOf<Pair<String, Double>>()
+        for (h in 0..7) for (a in 0..7) {
+            val prob = h1p[h] * a1p[a]
+            if (h > a) ht1 += prob else if (h == a) htx += prob else ht2 += prob
+            if (h + a >= 1) htOver05 += prob
+            if (h + a >= 2) htOver15 += prob
+            if (h + a >= 3) htOver25 += prob
+            if (h > 0 && a > 0) htBtts += prob
+            htScores.add(Pair("$h-$a", prob))
+        }
+        val htNorm = (0..7).sumOf { h -> (0..7).sumOf { a -> h1p[h] * a1p[a] } }.coerceAtLeast(0.000001)
+        val htTop = htScores.sortedByDescending { it.second }.take(3)
+            .joinToString(" · ") { "${it.first} ${rawPct(it.second / htNorm)}" }
+
+        // Jointly combine the estimated first- and second-half score distributions to derive HT/FT.
+        val combos = linkedMapOf("1/1" to 0.0, "1/X" to 0.0, "1/2" to 0.0,
+            "X/1" to 0.0, "X/X" to 0.0, "X/2" to 0.0,
+            "2/1" to 0.0, "2/X" to 0.0, "2/2" to 0.0)
+        val h2p = DoubleArray(8) { poisson(h2Lambda, it) }
+        val a2p = DoubleArray(8) { poisson(a2Lambda, it) }
+        for (hFirst in 0..7) for (aFirst in 0..7) {
+            val halfProb = h1p[hFirst] * a1p[aFirst]
+            val halfResult = result(hFirst, aFirst)
+            for (hSecond in 0..7) for (aSecond in 0..7) {
+                val fullResult = result(hFirst + hSecond, aFirst + aSecond)
+                val key = "$halfResult/$fullResult"
+                combos[key] = (combos[key] ?: 0.0) + halfProb * h2p[hSecond] * a2p[aSecond]
+            }
+        }
+        val comboTotal = combos.values.sum().coerceAtLeast(0.000001)
+        val comboText = combos.entries.sortedByDescending { it.value }.take(5)
+            .joinToString("\n") { "${it.key}: ${rawPct(it.value / comboTotal)}" }
+        val outcome = if (p1 >= px && p1 >= p2) "1" else if (p2 >= p1 && p2 >= px) "2" else "X"
+        val sampleNote = if (home.count < 7 || away.count < 7) "\nVeri uyarısı: En az bir takımda 7'den az geçerli maç var; olasılıklar daha oynak olabilir." else ""
+        val venueNote = "İç saha/dış saha örnekleri: ${home.homeCount} / ${away.awayCount} maç."
+        val firstHalfNote = "İlk yarı oranları doğrudan ilk yarı skorlarından değil, tam maç gol beklentisinin yaklaşık %43'ünden türetilen tahminlerdir."
+        return "MAÇ SONUCU\n1: ${pct(p1)}   X: ${pct(px)}   2: ${pct(p2)}\nEn yüksek olasılıklı sonuç: $outcome\n\nBEKLENEN GOL\nEv sahibi: ${"%.2f".format(Locale.US, lh)} · Deplasman: ${"%.2f".format(Locale.US, la)}\nToplam gol 1,5 üst: ${pct(over15)} · 2,5 üst: ${pct(over25)} · 3,5 üst: ${pct(over35)}\nKarşılıklı gol: ${pct(btts)} · Ev sahibi 0,5 üst: ${pct(homeScores)} · Deplasman 0,5 üst: ${pct(awayScores)}\nEv sahibi 1,5 üst: ${pct(homeOver15)} · Deplasman 1,5 üst: ${pct(awayOver15)}\n\nOLASI MAÇ SKORLARI (olasılığa göre)\n$topScores\n\nİLK YARI\nİlk yarı 1/X/2: ${rawPct(ht1 / htNorm)} / ${rawPct(htx / htNorm)} / ${rawPct(ht2 / htNorm)}\nİlk yarı gol 0,5 üst: ${rawPct(htOver05 / htNorm)} · 1,5 üst: ${rawPct(htOver15 / htNorm)} · 2,5 üst: ${rawPct(htOver25 / htNorm)}\nİlk yarı karşılıklı gol: ${rawPct(htBtts / htNorm)}\nOlası ilk yarı skorları: $htTop\n\nİLK YARI / MAÇ SONUCU\n$comboText\n\nSON MAÇLARIN ORTALAMASI\nEv sahibi: ${"%.2f".format(Locale.US, home.scored)} atılan / ${"%.2f".format(Locale.US, home.conceded)} yenilen (${home.count} maç)\nDeplasman: ${"%.2f".format(Locale.US, away.scored)} atılan / ${"%.2f".format(Locale.US, away.conceded)} yenilen (${away.count} maç)\nForm (G: galibiyet, B: beraberlik, M: mağlubiyet): ${home.form} | ${away.form}\n$venueNote\nModel: yakın dönem tam maç skorlarından türetilen Poisson olasılık modeli; xG, kadro ve sakatlık verisi kullanılmıyor. $firstHalfNote$sampleNote\nTahminler olasılıktır, kesin sonuç garantisi değildir."
     }
 
     private fun poisson(lambda: Double, k: Int): Double {
